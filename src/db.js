@@ -148,6 +148,55 @@ function seed(db) {
   }
 }
 
+// Schema changes after the first release. Each entry runs once, in order; the
+// database remembers how far it got in PRAGMA user_version.
+const MIGRATIONS = [
+  // 1: team logins, who-entered-what, Hospitable import, Rhea's parking income.
+  `
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('admin','encoder')),
+    active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  ALTER TABLE transactions ADD COLUMN created_by INTEGER REFERENCES users(id);
+  ALTER TABLE bookings ADD COLUMN created_by INTEGER REFERENCES users(id);
+  ALTER TABLE bookings ADD COLUMN source TEXT NOT NULL DEFAULT 'manual';
+  ALTER TABLE bookings ADD COLUMN external_id TEXT;
+  CREATE UNIQUE INDEX bookings_external ON bookings(source, external_id) WHERE external_id IS NOT NULL;
+  -- 1 = encoders (e.g. Rhea) may record income in this category. Expenses are always allowed.
+  ALTER TABLE categories ADD COLUMN encoder_ok INTEGER NOT NULL DEFAULT 0;
+  CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE import_batches (
+    id INTEGER PRIMARY KEY,
+    filename TEXT NOT NULL DEFAULT '',
+    csv_text TEXT NOT NULL,
+    -- JSON: chosen columns, date format, property→listing and platform→channel choices.
+    mapping TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  INSERT INTO categories (name, kind, grp, sort_order, encoder_ok) VALUES ('Parking income', 'income', 'Other income', -1, 1);
+  `,
+];
+
+function migrate(db) {
+  let { user_version: v } = db.prepare('PRAGMA user_version').get();
+  for (; v < MIGRATIONS.length; v++) {
+    db.exec('BEGIN');
+    try {
+      db.exec(MIGRATIONS[v]);
+      db.exec(`PRAGMA user_version = ${v + 1}`);
+      db.exec('COMMIT');
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+}
+
 function openDb(file = process.env.DB_PATH || path.join(__dirname, '..', 'data', 'renbnb.sqlite')) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
@@ -155,6 +204,7 @@ function openDb(file = process.env.DB_PATH || path.join(__dirname, '..', 'data',
   if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
   db.exec(SCHEMA);
   seed(db);
+  migrate(db);
   db.file = file;
   return db;
 }

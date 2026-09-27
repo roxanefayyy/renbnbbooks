@@ -1,4 +1,5 @@
 // Shared page chrome and small UI helpers.
+const { AsyncLocalStorage } = require('node:async_hooks');
 const { html, raw } = require('./html');
 const { formatMoney } = require('./money');
 
@@ -61,24 +62,29 @@ button.small,.btn.small{padding:3px 9px;font-size:13px}
 @media (max-width:600px){h1{font-size:19px}.stat .value{font-size:19px}}
 `;
 
+// The logged-in user for the current request, so every page can adapt without threading it through.
+const currentUser = new AsyncLocalStorage();
+
 const NAV = [
-  ['/', 'Dashboard'],
-  ['/bookings', 'Bookings'],
-  ['/transactions', 'Money in/out'],
-  ['/reports/pnl', 'P&L'],
-  ['/reports/trend', 'Trend'],
-  ['/accounts', 'Accounts'],
-  ['/settings', 'Settings'],
+  ['/', 'Dashboard', 'admin'],
+  ['/bookings', 'Bookings', 'admin'],
+  ['/transactions', 'Money in/out', 'encoder'],
+  ['/reports/pnl', 'P&L', 'admin'],
+  ['/reports/trend', 'Trend', 'admin'],
+  ['/accounts', 'Accounts', 'admin'],
+  ['/settings', 'Settings', 'admin'],
 ];
 
-function layout({ title, active, body, flash, bare = false }) {
-  const nav = NAV.map(([href, label]) => html`<a href="${href}" class="${active === href ? 'on' : ''}">${label}</a>`);
+function layout({ title, active, body, flash, bare = false, user = currentUser.getStore() }) {
+  const isAdmin = user?.role === 'admin';
+  const nav = NAV.filter(([, , role]) => isAdmin || role === 'encoder')
+    .map(([href, label]) => html`<a href="${href}" class="${active === href ? 'on' : ''}">${label}</a>`);
   return html`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${title} · RenBNB Books</title><style>${raw(CSS)}</style></head>
 <body>
 ${bare ? '' : html`<header><div class="inner"><a class="brand" href="/">RenBNB Books</a><nav>${nav}</nav>
-<span style="flex:1"></span><form method="post" action="/logout" class="inline"><button class="ghost small" style="color:#d8d6cf;border-color:#555">Log out</button></form></div></header>`}
+<span style="flex:1"></span>${user ? html`<span style="color:#d8d6cf;font-size:13px">${user.name}</span>` : ''}<form method="post" action="/logout" class="inline"><button class="ghost small" style="color:#d8d6cf;border-color:#555">Log out</button></form></div></header>`}
 <main>
 ${flash ? html`<div class="flash ${flash.type === 'error' ? 'err' : ''}">${flash.message}</div>` : ''}
 ${body}
@@ -94,4 +100,4 @@ function options(items, selected, { value = 'id', label = 'name', blank } = {}) 
     html`<option value="${it[value]}" ${String(it[value]) === sel ? raw('selected') : ''}>${it[label]}</option>`)}`;
 }
 
-module.exports = { layout, money, pct, options };
+module.exports = { layout, money, pct, options, currentUser };

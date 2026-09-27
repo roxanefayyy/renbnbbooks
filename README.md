@@ -5,6 +5,8 @@ Bookkeeping web app for RenBNB's short-term rental listings. Tracks bookings fro
 ## What it does
 
 - **Bookings**: one row per stay, covering gross, cleaning fee, platform commission, payout, and payout status. Commission is prefilled from each channel's typical rate.
+- **Hospitable import**: upload the Reservations & Financials CSV instead of typing bookings (see below).
+- **Team logins**: admin (everything) and encoder (expenses plus parking income only).
 - **Money in/out**: expenses, other income, transfers between accounts, commission invoice payments, and owner draws and contributions.
 - **Dashboard**: month revenue, expenses, net profit, occupancy, ADR (average daily rate), and cash on hand. It also shows each listing's net after shared costs, pending and overdue payouts, and red flags.
 - **P&L**: any date range, per listing, on an accrual or cash basis. Downloadable as a CSV file.
@@ -37,7 +39,7 @@ APP_PASSWORD=choose-a-strong-one SESSION_SECRET=$(openssl rand -hex 32) npm star
 
 | Env var | Purpose |
 |---|---|
-| `APP_PASSWORD` | Team password. **Always set this in production.** Without it the app is open to anyone. |
+| `APP_PASSWORD` | Owner recovery login: username `admin` with this password always works. **Always set this in production.** With no password and no team logins, the app is open to anyone. |
 | `SESSION_SECRET` | Signs login cookies. Set it so logins survive restarts. |
 | `DB_PATH` | SQLite file location. The default is `data/renbnb.sqlite`. |
 | `PORT` | The default is 3000. |
@@ -55,16 +57,41 @@ Serverless hosts with no disk (Vercel, Netlify) **will lose data**, so don't use
 
 **Backups:** Settings → *Full database backup* downloads a copy of everything. Do this weekly and keep it in Google Drive.
 
+## Team logins
+
+Settings → **Team logins**. Give each person their own username.
+
+| Access | Can do |
+|---|---|
+| **Admin** | Everything. |
+| **Encoder** (e.g. Rhea) | Record **any expense** and **income only in categories ticked "Encoders can use"**. Out of the box that is just *Parking income*. Sees the expense and parking income list so she can avoid double entries, but can only edit or delete entries **she** made. Cannot see bookings, P&L, dashboard, balances, settings, or exports. |
+
+Every entry records who entered it (the *Entered by* column). Unticking *Active* or changing someone's password logs them out immediately.
+
+## Importing from Hospitable
+
+1. In Hospitable: **Metrics → Exports → Reservations & Financials**. Choose the date range, include the financial columns, and download the CSV.
+2. Here: **Bookings → Import from Hospitable** → upload.
+3. **Confirm columns.** Columns are auto-detected; check the money ones. Map *Gross* if the file has what the guest paid. Otherwise map *Host payout* plus *Platform fee*, and gross is worked out from them. With no fee column, the channel's commission % from Settings is used (flagged "estimated").
+4. **Match and preview.** Match each Hospitable property to a listing (or create one), check the platforms, and review what will be new, updated, skipped, or has problems. Then import.
+
+Your choices are remembered, so next month is upload → next → import.
+
+- **No duplicates**: bookings are matched on the confirmation code. Re-importing an overlapping range updates amounts, dates, and status, and leaves payout status, payout date, account, and notes alone. A booking you typed in by hand with the same confirmation code gets linked, not duplicated.
+- **Skipped**: inquiries, declined, expired, and request statuses, plus repeated rows. **Cancelled** bookings are imported as cancelled (any payout still counts as revenue).
+- **Payouts**: imported bookings start as *pending*. For back-loading old stays you know were paid, tick *Mark payouts as received* on the preview step. The payout date is set to the check-out date.
+
 ## First-time setup (about 20 minutes)
 
-1. Settings → rename *Listing 1–7* to your real units.
+1. Settings → rename *Listing 1–7* to your real units, or let the first Hospitable import create listings from your property names and archive the placeholders.
 2. Settings → Money accounts: add your real accounts (e.g. BPI, GCash, Maya). Set each **opening balance** to the real balance on your start date.
 3. Settings → Booking channels: check the commission % and payout lag against your actual statements.
 4. Enter bookings from your start date onward, then expenses.
 
 ## Weekly routine (suggested)
 
-- **Rhea / Winnand:** log every new booking and every expense with a receipt link. Hit *Mark received* when a payout lands.
+- **Roxanne:** import the Hospitable CSV. Hit *Mark received* on the dashboard as payouts land.
+- **Rhea (encoder login):** log every expense and all parking income, each with a receipt link.
 - **Roxanne:** 10 minutes on the Dashboard. Clear the red flags and check that the account balances match your bank and GCash apps.
 - **Month end:** download the P&L CSV and a backup.
 

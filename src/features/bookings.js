@@ -47,6 +47,7 @@ module.exports = function bookings(db) {
         </form>
         <a class="btn ghost small" href="${q(shiftMonth(month, 1))}">Next ›</a>
         <span class="spacer"></span>
+        <a class="btn ghost" href="/import">Import from Hospitable</a>
         <a class="btn" href="/bookings/new">+ Add booking</a>
       </div>
       <div class="scroll"><table>
@@ -155,7 +156,7 @@ module.exports = function bookings(db) {
   r.post('/', (req, res) => {
     try {
       const b = parse(req.body);
-      db.prepare(`INSERT INTO bookings (${COLS.join(',')}) VALUES (${COLS.map(() => '?').join(',')})`).run(...COLS.map((c) => b[c]));
+      db.prepare(`INSERT INTO bookings (${COLS.join(',')}, created_by) VALUES (${COLS.map(() => '?').join(',')}, ?)`).run(...COLS.map((c) => b[c]), res.locals.user.id || null);
       res.redirect(`/bookings?month=${b.check_in.slice(0, 7)}&msg=Booking+saved`);
     } catch (e) {
       if (!(e instanceof FormErrors)) throw e;

@@ -4,6 +4,7 @@ const { layout, options } = require('../views');
 const { validator, FormErrors } = require('../forms');
 const { centsToInput } = require('../money');
 const { today } = require('../dates');
+const { hashPassword } = require('../auth');
 
 // Each editable reference table: its columns, how to render an input, and how to parse it.
 // Nothing is ever deleted (history must stay intact); rows are archived via "active".
@@ -45,13 +46,14 @@ const TABLES = {
   },
   categories: {
     title: 'Categories',
-    hint: 'Income and expense categories used in the P&L.',
+    hint: 'Income and expense categories used in the P&L. "Encoders can use" lets encoder logins (e.g. Rhea) record income in that category; they can always record any expense.',
     order: 'kind DESC, sort_order, id',
     fields: [
       ['name', 'Name', 'text'],
       ['kind', 'Kind', ['expense', 'income']],
       ['grp', 'Group', 'text'],
       ['sort_order', 'Order', 'int'],
+      ['encoder_ok', 'Encoders can use', 'bool', 0],
       ['active', 'Active', 'bool'],
     ],
   },
@@ -84,15 +86,73 @@ module.exports = function settings(db) {
           return html`<tr>${t.fields.map((f) => html`<td>${input(fid, f, row[f[0]])}</td>`)}
             <td><form id="${fid}" method="post" action="/settings/${key}/${row.id}" class="inline"><button class="small ghost">Save</button></form></td></tr>`;
         })}
-        <tr>${t.fields.map((f) => html`<td>${input(newId, f, f[2] === 'bool' ? 1 : undefined)}</td>`)}
+        <tr>${t.fields.map((f) => html`<td>${input(newId, f, f[2] === 'bool' ? (f[3] ?? 1) : undefined)}</td>`)}
           <td><form id="${newId}" method="post" action="/settings/${key}" class="inline"><button class="small">Add</button></form></td></tr>
       </table></div>`;
   }
+
+  function usersSection() {
+    const users = db.prepare('SELECT * FROM users ORDER BY active DESC, name').all();
+    const roles = [{ id: 'encoder', name: 'Encoder: expenses + parking income only' }, { id: 'admin', name: 'Admin: everything' }];
+    const row = (u) => {
+      const fid = u ? `users-${u.id}` : 'users-new';
+      return html`<tr>
+        <td><input form="${fid}" name="name" value="${u?.name || ''}" required style="min-width:140px"></td>
+        <td><input form="${fid}" name="username" value="${u?.username || ''}" required autocomplete="off" style="min-width:120px"></td>
+        <td><select form="${fid}" name="role">${options(roles, u?.role || 'encoder')}</select></td>
+        <td><input form="${fid}" type="password" name="password" autocomplete="new-password" placeholder="${u ? 'leave blank to keep' : 'min 8 characters'}" ${u ? '' : raw('required')}></td>
+        <td>${u ? html`<input type="checkbox" form="${fid}" name="active" ${u.active ? raw('checked') : ''}>` : ''}</td>
+        <td><form id="${fid}" method="post" action="/settings/users${u ? `/${u.id}` : ''}" class="inline"><button class="small ${u ? 'ghost' : ''}">${u ? 'Save' : 'Add'}</button></form></td>
+      </tr>`;
+    };
+    return html`
+      <h2 id="users">Team logins</h2>
+      <p class="muted" style="margin-top:-4px">Give each person their own login. Encoders (e.g. Rhea) can record expenses and parking income, and edit only what they entered. They can't see bookings, profit or balances. Unticking Active or changing a password logs that person out.</p>
+      <div class="scroll"><table>
+        <tr><th>Name</th><th>Username</th><th>Access</th><th>Password</th><th>Active</th><th></th></tr>
+        ${users.map(row)}${row(null)}
+      </table></div>`;
+  }
+
+  function saveUser(req, res, id) {
+    const v = validator(req.body);
+    const u = {
+      name: v.str('name', { max: 80 }),
+      username: v.str('username', { max: 40 }).toLowerCase(),
+      role: v.oneOf('role', 'Access', ['encoder', 'admin']),
+      active: id ? v.bool('active') : 1,
+    };
+    const pw = String(req.body.password || '');
+    if (!u.name) v.errors.push('Name is required.');
+    if (!/^[a-z0-9._-]{2,40}$/.test(u.username)) v.errors.push('Username: 2–40 letters, numbers, dots, dashes.');
+    if (u.username === 'admin') v.errors.push('"admin" is reserved for the owner recovery login.');
+    if ((!id || pw) && pw.length < 8) v.errors.push('Password must be at least 8 characters.');
+    const clash = db.prepare('SELECT id FROM users WHERE username = ? AND id IS NOT ?').get(u.username, id ?? null);
+    if (clash) v.errors.push('That username is taken.');
+    if (id && id === res.locals.user.id && (u.role !== 'admin' || !u.active)) v.errors.push("You can't remove your own admin access.");
+    try {
+      v.check();
+    } catch (e) {
+      if (!(e instanceof FormErrors)) throw e;
+      return res.redirect(`/settings?err=${encodeURIComponent(e.message)}#users`);
+    }
+    if (id) {
+      db.prepare('UPDATE users SET name = ?, username = ?, role = ?, active = ? WHERE id = ?').run(u.name, u.username, u.role, u.active, id);
+      if (pw) db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(pw), id);
+    } else {
+      db.prepare('INSERT INTO users (name, username, role, password_hash) VALUES (?,?,?,?)').run(u.name, u.username, u.role, hashPassword(pw));
+    }
+    back(res, 'users', `Team: ${u.name} saved`);
+  }
+
+  r.post('/users', (req, res) => saveUser(req, res, null));
+  r.post('/users/:id', (req, res) => saveUser(req, res, Number(req.params.id)));
 
   r.get('/', (req, res) => {
     const body = html`
       <h1>Settings</h1>
       <p class="sub">Rename the placeholder listings and set your real account opening balances first.</p>
+      ${usersSection()}
       ${Object.keys(TABLES).map(tableSection)}
       <h2>Backup &amp; export</h2>
       <p><a class="btn ghost" href="/export/bookings.csv">Bookings CSV</a> <a class="btn ghost" href="/export/transactions.csv">Money in/out CSV</a> <a class="btn ghost" href="/export/backup.sqlite">Full database backup</a></p>
